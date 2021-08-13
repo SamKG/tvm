@@ -3933,7 +3933,76 @@ class RandomUniform(OnnxOpConverter):
         _, vals = _expr.TupleWrapper(output, 2)
         return vals
 
+class RandomNormal(OnnxOpConverter):
+    """Operator converter for random_uniform"""
 
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        dtype = get_type(attr.get("dtype", 1))
+        mean = attr.get("mean", 0.0)
+        scale = attr.get("scale", 1.0)
+        seed = attr.get("seed", None)
+        shape = attr["shape"]
+
+        assert dtype in [
+            "float32",
+            "float64",
+        ], "Only float random value generation is currently supported."
+
+        if seed is None:
+            seed = np.random.randint(1e6)
+
+        key = _random.threefry_key(seed)
+        output = _op.random.uniform(key, shape, dtype=dtype, low=0.0, high=1.0)
+        key, u1 = _expr.TupleWrapper(output, 2)
+        output2 = _op.random.uniform(key, shape, dtype=dtype, low=0.0, high=1.0)
+        _, u2 = _expr.TupleWrapper(output2, 2)
+
+        # do box-muller transform
+        const1 = _op.const(-2.0)
+        const2 = _op.const(2.0*np.pi)
+        vals = _op.sqrt(const1 * _op.log(u1)) * _op.cos(const2 * u2)
+        vals = _op.add(_op.multiply(vals, _op.const(scale)), _op.const(mean))
+
+        return vals
+
+class RandomNormalLike(OnnxOpConverter):
+    """Operator converter for random_uniform"""
+
+    @classmethod
+    def _impl_v1(cls, inputs, attr, params):
+        in_checked_type = infer_type(inputs[0]).checked_type
+        in_dtype = in_checked_type.dtype
+        in_shape = list(get_const_tuple(in_checked_type.shape))
+        dtype = attr.get("dtype", None)
+        if dtype is None:
+            dtype = in_dtype
+        else:
+            dtype = get_type(dtype)
+        mean = attr.get("mean", 0.0)
+        scale = attr.get("scale", 1.0)
+        seed = attr.get("seed", None)
+        assert dtype in [
+            "float32",
+            "float64",
+        ], "Only float random value generation is currently supported."
+
+        if seed is None:
+            seed = np.random.randint(1e6)
+
+        key = _random.threefry_key(seed)
+        output = _op.random.uniform(key, in_shape, dtype=dtype, low=0.0, high=1.0)
+        key, u1 = _expr.TupleWrapper(output, 2)
+        output2 = _op.random.uniform(key, in_shape, dtype=dtype, low=0.0, high=1.0)
+        _, u2 = _expr.TupleWrapper(output2, 2)
+
+        # do box-muller transform
+        const1 = _op.const(-2.0)
+        const2 = _op.const(2.0*np.pi)
+        vals = _op.sqrt(const1 * _op.log(u1)) * _op.cos(const2 * u2)
+        vals = _op.add(_op.multiply(vals, _op.const(scale)), _op.const(mean))
+
+        return vals
 class NegativeLogLikelihoodLoss(OnnxOpConverter):
     """Operator converter for NegativeLogLikehoodLoss"""
 
@@ -4260,9 +4329,7 @@ def _get_convert_map(opset):
         # defs/generator
         # 'Constant' # Implemented
         # 'RandomUniform'
-        # 'RandomNormal'
         # 'RandomUniformLike'
-        # 'RandomNormalLike'
         # defs/logical
         # defs/math
         "Add": Add.get_converter(opset),
@@ -4419,6 +4486,8 @@ def _get_convert_map(opset):
         "QLinearLeakyRelu": QLinearLeakyRelu.get_converter(opset),
         # Random number generation.
         "RandomUniform": RandomUniform.get_converter(opset),
+        "RandomNormal": RandomNormal.get_converter(opset),
+        "RandomNormalLike": RandomNormalLike.get_converter(opset),
         # Loss functions / training
         "NegativeLogLikelihoodLoss": NegativeLogLikelihoodLoss.get_converter(opset),
         "SoftmaxCrossEntropyLoss": SoftmaxCrossEntropyLoss.get_converter(opset),
